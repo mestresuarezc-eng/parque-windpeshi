@@ -12,6 +12,7 @@
   .tarjeta { background: #fff; border-radius: 10px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 4px #0002; }
   .buscador { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
   .buscador input { padding: 6px; font-size: 1rem; }
+  .buscador input[type=number] { width: 80px; }
   .buscador button { padding: 8px 16px; font-size: 1rem; border: 0; border-radius: 6px;
                      background: #1b6ca8; color: #fff; cursor: pointer; }
   .veredicto { display: inline-block; padding: 8px 20px; border-radius: 8px; font-size: 1.5rem;
@@ -26,6 +27,8 @@
   .resumen b { font-size: 1.5rem; }
   .gen { color: #1b6ca8; }
   .dem { color: #d9822b; }
+  .bess { color: #2e8b57; }
+  .vert { color: #c0392b; }
   #error { color: #b00020; }
   .nota { font-size: 0.85rem; color: #667; }
 </style>
@@ -36,6 +39,7 @@
 
   <div class="buscador">
     <label>Buscar día: <input type="date" id="fecha"></label>
+    <label>Contenedores BESS (5 MW / 10 MWh): <input type="number" id="contenedores" min="0" max="200" value="0"></label>
     <button id="boton">Evaluar día</button>
   </div>
   <p id="error"></p>
@@ -65,6 +69,11 @@
       <div>Genera en el día: <b class="gen" id="genDia">-</b> MWh</div>
       <div>Demanda del día: <b class="dem" id="demDia">-</b> MWh</div>
     </div>
+    <div class="resumen" id="resumenBess" style="display:none">
+      <div>Guardado en BESS: <b class="bess" id="almDia">-</b> MWh</div>
+      <div>Entregado por BESS: <b class="bess" id="desDia">-</b> MWh</div>
+      <div>Energía vertida: <b class="vert" id="vertDia">-</b> MWh</div>
+    </div>
     <canvas id="grafDia"></canvas>
   </div>
 
@@ -75,6 +84,11 @@
 const demo = new URLSearchParams(location.search).get("demo") === "true";
 let grafMes, grafDia;
 const $ = id => document.getElementById(id);
+
+function contenedores() {
+  const n = parseInt($("contenedores").value, 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
 
 async function pedir(url) {
   const r = await fetch(url + (demo ? "&demo=true" : ""));
@@ -99,15 +113,17 @@ function mostrarEvaluacion(ev) {
 function dibujarMes(fecha, mes) {
   $("tituloMes").textContent = "Generación vs demanda diaria - " + fecha.slice(0, 7);
   if (grafMes) grafMes.destroy();
+  const datasets = [
+    { type: "bar", label: "Generación (MWh)", data: mes.gen_mwh, backgroundColor: "#1b6ca8" },
+    { type: "line", label: "Demanda La Guajira (MWh)", data: mes.dem_mwh,
+      borderColor: "#d9822b", borderWidth: 3, pointRadius: 0 },
+  ];
+  if (mes.n_contenedores > 0) {
+    datasets.push({ type: "line", label: "Vertido (MWh)", data: mes.vertido_mwh,
+      borderColor: "#c0392b", borderWidth: 2, borderDash: [6, 4], pointRadius: 0 });
+  }
   grafMes = new Chart($("grafMes"), {
-    data: {
-      labels: mes.dias,
-      datasets: [
-        { type: "bar", label: "Generación (MWh)", data: mes.gen_mwh, backgroundColor: "#1b6ca8" },
-        { type: "line", label: "Demanda La Guajira (MWh)", data: mes.dem_mwh,
-          borderColor: "#d9822b", borderWidth: 3, pointRadius: 0 },
-      ],
-    },
+    data: { labels: mes.dias, datasets },
     options: {
       scales: {
         x: { title: { display: true, text: "Día del mes" } },
@@ -121,24 +137,38 @@ function dibujarDia(fecha, dia) {
   $("tituloDia").textContent = "Curva de 24 horas - " + fecha;
   $("genDia").textContent = dia.gen_mwh;
   $("demDia").textContent = dia.dem_mwh;
+
+  const b = dia.bess;
+  const hayBess = b && b.n_contenedores > 0;
+  $("resumenBess").style.display = hayBess ? "flex" : "none";
+  if (hayBess) {
+    $("almDia").textContent = b.almacenado_mwh;
+    $("desDia").textContent = b.descargado_mwh;
+    $("vertDia").textContent = b.vertido_mwh;
+  }
+
   if (grafDia) grafDia.destroy();
+  const datasets = [
+    { label: "Generación (MW)", data: dia.gen_mw, borderColor: "#1b6ca8",
+      backgroundColor: "#1b6ca833", fill: true, tension: 0.3 },
+    { label: "Demanda La Guajira (MW)", data: dia.dem_mw, borderColor: "#d9822b",
+      borderWidth: 3, pointRadius: 0 },
+  ];
+  const scales = {
+    x: { title: { display: true, text: "Hora local" } },
+    y: { title: { display: true, text: "MW" }, beginAtZero: true },
+  };
+  if (hayBess) {
+    datasets.push({ label: "Energía guardada en BESS (MWh)", data: b.soc_mwh,
+      borderColor: "#2e8b57", backgroundColor: "#2e8b5733", fill: true,
+      stepped: true, yAxisID: "y2" });
+    scales.y2 = { position: "right", beginAtZero: true,
+      title: { display: true, text: "MWh guardados" }, grid: { drawOnChartArea: false } };
+  }
   grafDia = new Chart($("grafDia"), {
     type: "line",
-    data: {
-      labels: dia.horas,
-      datasets: [
-        { label: "Generación (MW)", data: dia.gen_mw, borderColor: "#1b6ca8",
-          backgroundColor: "#1b6ca833", fill: true, tension: 0.3 },
-        { label: "Demanda La Guajira (MW)", data: dia.dem_mw, borderColor: "#d9822b",
-          borderWidth: 3, pointRadius: 0 },
-      ],
-    },
-    options: {
-      scales: {
-        x: { title: { display: true, text: "Hora local" } },
-        y: { title: { display: true, text: "MW" }, beginAtZero: true },
-      },
-    },
+    data: { labels: dia.horas, datasets },
+    options: { scales },
   });
 }
 
@@ -147,10 +177,11 @@ async function cargar() {
   if (!fecha) { $("error").textContent = "Elige una fecha."; return; }
   $("error").textContent = "";
   $("errorMes").textContent = "";
+  const n = contenedores();
 
   const [resMes, resDia] = await Promise.allSettled([
-    pedir("/api/mes?date=" + fecha),
-    pedir("/api/dia?date=" + fecha),
+    pedir("/api/mes?date=" + fecha + "&n_contenedores=" + n),
+    pedir("/api/dia?date=" + fecha + "&n_contenedores=" + n),
   ]);
 
   if (resDia.status === "fulfilled") {
@@ -174,6 +205,7 @@ hoy.setDate(hoy.getDate() - 3);
 $("fecha").value = hoy.toISOString().slice(0, 10);
 $("boton").addEventListener("click", cargar);
 $("fecha").addEventListener("change", cargar);
+$("contenedores").addEventListener("change", cargar);
 cargar();
 </script>
 </body>

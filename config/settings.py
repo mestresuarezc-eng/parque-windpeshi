@@ -12,7 +12,7 @@ Z0 = 0.03             # m, rugosidad del terreno
 HUB_HEIGHT = 100.0    # m, altura del buje
 ROTOR_DIAMETER = 97.0 # m
 CP = 0.42             # coeficiente aerodinamico
-RATED_KW = 2100.0     # kW por turbina
+RATED_KW = 5000.0     # kW por turbina
 V_CUT_IN = 3.5        # m/s
 V_CUT_OUT = 25.0      # m/s
 
