@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Windpeshi - Uribia</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  body { font-family: "Segoe UI", Arial, sans-serif; margin: 0; background: #f4f7fa; color: #223; }
+  main { max-width: 1000px; margin: auto; padding: 16px; }
+  h1 { font-size: 1.3rem; }
+  .tarjeta { background: #fff; border-radius: 10px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 4px #0002; }
+  .buscador { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+  .buscador input { padding: 6px; font-size: 1rem; }
+  .buscador button { padding: 8px 16px; font-size: 1rem; border: 0; border-radius: 6px;
+                     background: #1b6ca8; color: #fff; cursor: pointer; }
+  .veredicto { display: inline-block; padding: 8px 20px; border-radius: 8px; font-size: 1.5rem;
+               font-weight: bold; color: #fff; }
+  .FUNCIONAL { background: #2e8b57; }
+  .PARCIAL { background: #e08a1e; }
+  .NOFUNCIONAL { background: #c0392b; }
+  .datos { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-top: 12px; }
+  .datos div { background: #f4f7fa; border-radius: 8px; padding: 10px; font-size: 0.9rem; }
+  .datos b { display: block; font-size: 1.3rem; margin-top: 4px; }
+  .resumen { display: flex; gap: 32px; flex-wrap: wrap; font-size: 1.1rem; margin: 8px 0 12px; }
+  .resumen b { font-size: 1.5rem; }
+  .gen { color: #1b6ca8; }
+  .dem { color: #d9822b; }
+  #error { color: #b00020; }
+  .nota { font-size: 0.85rem; color: #667; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Parque Windpeshi (41 turbinas) vs consumo de La Guajira</h1>
+
+  <div class="buscador">
+    <label>Buscar día: <input type="date" id="fecha"></label>
+    <button id="boton">Evaluar día</button>
+  </div>
+  <p id="error"></p>
+
+  <div class="tarjeta" id="tarjetaEval" style="display:none">
+    <div class="veredicto" id="veredicto"></div>
+    <p id="motivo"></p>
+    <div class="datos">
+      <div>Cobertura de la demanda<b id="evCob"></b></div>
+      <div>Horas con generación<b id="evUtiles"></b></div>
+      <div>Horas a potencia nominal<b id="evNominal"></b></div>
+      <div>Viento medio a 100 m<b id="evViento"></b></div>
+      <div>Factor de capacidad<b id="evFc"></b></div>
+      <div>Déficit del día<b id="evDef"></b></div>
+    </div>
+  </div>
+
+  <div class="tarjeta">
+    <h3 id="tituloMes">Mes</h3>
+    <p id="errorMes" class="nota"></p>
+    <canvas id="grafMes"></canvas>
+  </div>
+
+  <div class="tarjeta">
+    <h3 id="tituloDia">Día</h3>
+    <div class="resumen">
+      <div>Genera en el día: <b class="gen" id="genDia">-</b> MWh</div>
+      <div>Demanda del día: <b class="dem" id="demDia">-</b> MWh</div>
+    </div>
+    <canvas id="grafDia"></canvas>
+  </div>
+
+  <p class="nota">Demanda: promedio diario de La Guajira del año pasado (UPME / XM), igual en las 24 horas.</p>
+</main>
+
+<script>
+const demo = new URLSearchParams(location.search).get("demo") === "true";
+let grafMes, grafDia;
+const $ = id => document.getElementById(id);
+
+async function pedir(url) {
+  const r = await fetch(url + (demo ? "&demo=true" : ""));
+  if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+  return r.json();
+}
+
+function mostrarEvaluacion(ev) {
+  $("tarjetaEval").style.display = "block";
+  const v = $("veredicto");
+  v.textContent = "Día " + ev.veredicto;
+  v.className = "veredicto " + ev.veredicto.replace(" ", "");
+  $("motivo").textContent = ev.motivo;
+  $("evCob").textContent = ev.cobertura_pct + " %";
+  $("evUtiles").textContent = ev.horas_utiles + " / 24";
+  $("evNominal").textContent = ev.horas_nominal + " / 24";
+  $("evViento").textContent = ev.viento_medio + " m/s";
+  $("evFc").textContent = ev.factor_capacidad_pct + " %";
+  $("evDef").textContent = ev.deficit_mwh + " MWh";
+}
+
+function dibujarMes(fecha, mes) {
+  $("tituloMes").textContent = "Generación vs demanda diaria - " + fecha.slice(0, 7);
+  if (grafMes) grafMes.destroy();
+  grafMes = new Chart($("grafMes"), {
+    data: {
+      labels: mes.dias,
+      datasets: [
+        { type: "bar", label: "Generación (MWh)", data: mes.gen_mwh, backgroundColor: "#1b6ca8" },
+        { type: "line", label: "Demanda La Guajira (MWh)", data: mes.dem_mwh,
+          borderColor: "#d9822b", borderWidth: 3, pointRadius: 0 },
+      ],
+    },
+    options: {
+      scales: {
+        x: { title: { display: true, text: "Día del mes" } },
+        y: { title: { display: true, text: "MWh" }, beginAtZero: true },
+      },
+    },
+  });
+}
+
+function dibujarDia(fecha, dia) {
+  $("tituloDia").textContent = "Curva de 24 horas - " + fecha;
+  $("genDia").textContent = dia.gen_mwh;
+  $("demDia").textContent = dia.dem_mwh;
+  if (grafDia) grafDia.destroy();
+  grafDia = new Chart($("grafDia"), {
+    type: "line",
+    data: {
+      labels: dia.horas,
+      datasets: [
+        { label: "Generación (MW)", data: dia.gen_mw, borderColor: "#1b6ca8",
+          backgroundColor: "#1b6ca833", fill: true, tension: 0.3 },
+        { label: "Demanda La Guajira (MW)", data: dia.dem_mw, borderColor: "#d9822b",
+          borderWidth: 3, pointRadius: 0 },
+      ],
+    },
+    options: {
+      scales: {
+        x: { title: { display: true, text: "Hora local" } },
+        y: { title: { display: true, text: "MW" }, beginAtZero: true },
+      },
+    },
+  });
+}
+
+async function cargar() {
+  const fecha = $("fecha").value;
+  if (!fecha) { $("error").textContent = "Elige una fecha."; return; }
+  $("error").textContent = "";
+  $("errorMes").textContent = "";
+
+  const [resMes, resDia] = await Promise.allSettled([
+    pedir("/api/mes?date=" + fecha),
+    pedir("/api/dia?date=" + fecha),
+  ]);
+
+  if (resDia.status === "fulfilled") {
+    mostrarEvaluacion(resDia.value.evaluacion);
+    dibujarDia(fecha, resDia.value);
+  } else {
+    $("tarjetaEval").style.display = "none";
+    $("error").textContent = "Error: " + resDia.reason.message;
+  }
+
+  if (resMes.status === "fulfilled") {
+    dibujarMes(fecha, resMes.value);
+  } else {
+    $("errorMes").textContent = "No se pudo cargar el mes: " + resMes.reason.message;
+  }
+}
+
+// Fecha inicial: hace 3 días (los datos históricos tardan un poco en estar)
+const hoy = new Date();
+hoy.setDate(hoy.getDate() - 3);
+$("fecha").value = hoy.toISOString().slice(0, 10);
+$("boton").addEventListener("click", cargar);
+$("fecha").addEventListener("change", cargar);
+cargar();
+</script>
+</body>
+</html>
